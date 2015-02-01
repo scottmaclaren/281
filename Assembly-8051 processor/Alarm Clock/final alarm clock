@@ -1,0 +1,412 @@
+; Blinky_Int.asm: blinks LEDR0 of the DE2-8052 each second.
+; Also generates a 2kHz signal at P0.0 using timer 0 interrupt.
+; Also keeps a BCD counter using timer 2 interrupt.
+
+$MODDE2
+
+CLK EQU 33333333
+FREQ_0 EQU 2000
+FREQ_2 EQU 100
+TIMER0_RELOAD EQU 65536-(CLK/(12*2*FREQ_0))
+TIMER2_RELOAD EQU 65536-(CLK/(12*FREQ_2))
+
+org 0000H
+	ljmp myprogram
+	
+org 000BH
+	ljmp ISR_timer0
+	
+org 002BH
+	ljmp ISR_timer2
+
+;this stores if it as am or pm. 
+BSEG
+AMPM: dbit 1
+alarmAMPM: dbit 1
+DSEG at 30H
+
+Cnt_10ms:  ds 1
+;8 bits per byte- 255- 
+hours : ds 1
+minutes : ds 1
+seconds:  ds 1
+hundred : ds 1
+alarmhours: ds 1
+alarmminutes: ds 1
+alarmseconds: ds 1
+;AMPM : ds 1 ;dbit only in bseg
+
+CSEG
+
+; Look-up table for 7-segment displays
+myLUT:
+    DB 0C0H, 0F9H, 0A4H, 0B0H, 099H
+    DB 092H, 082H, 0F8H, 080H, 090H
+
+ISR_timer2:
+;this is for clock timer
+;need to check for alarm setting
+
+	push psw
+	push acc
+	push dpl
+	push dph
+	
+	
+	
+	
+	clr TF2
+	
+	
+	checkforalarm:
+	jnb SWA.2, alarmoff ;switch two is the alarm on or off switch
+	mov a, hours
+	cjne a, alarmhours, next
+	mov a, minutes
+	cjne a, alarmminutes, next
+	mov a, seconds
+	cjne a, alarmseconds, next
+	mov a, AMPM
+	cpl a ;because for some reason  I have my ampm for time and alarm backwards- change later
+	subb a, alarmAMPM
+	jz next
+	
+	setb ET0
+	sjmp next
+	
+	alarmoff:
+	clr ET0
+	
+	next:
+;	jb SWA.2, setalarm won't work need a call
+	jb SWA.1, do_nothing ; skip time change if alarm set mode on
+	jb SWA.0, update_display ; skip time if change time mode is on
+	
+	
+	
+	;loop to wait 1 second
+	mov a, Cnt_10ms
+	inc a
+	mov Cnt_10ms, a
+	
+	cjne a, #100, do_nothing
+	
+	mov Cnt_10ms, #0
+	
+
+	mov dptr, #myLUT
+;increimenting the time for the display
+	mov a, seconds
+	;can't increiment seconds- data adjust only works after add
+	add a, #1
+	da a
+	mov seconds, a
+	cjne a, #60H, update_display ; if BCD we need to use hex to do a proper comparison??
+	mov seconds, #0  
+	
+	mov a, minutes
+	add a, #1
+	da a
+	mov minutes, a
+	cjne a, #60H, update_display
+	mov minutes, #0
+	
+	mov a, hours
+	add a, #1
+	da a
+	mov hours, a
+	mov a, hours
+	cjne a, #13H, update_display
+	mov hours, #01H
+	cpl AMPM
+	
+update_display:
+;store in BCD format
+;seconds digit one
+;leaving HEX1 for A or P for am or pm 
+
+	mov dptr, #myLUT
+	mov a, seconds
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX2, a
+;seconds digit two
+	mov a, seconds
+	swap a
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX3, a
+
+;minutes- digit 1
+	mov a, minutes
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX4, a
+	
+; minutes digit 2
+	mov a, minutes
+	swap a
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX5, a
+
+;hours digit 1
+	mov a, hours
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX6, a
+
+;hours digit 2
+	mov a, hours
+	swap a
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX7, a
+
+;ampm
+;when ampm = 1, it's PM
+amchange:
+jb AMPM, pm
+pmchange:
+Jnb AMPM, am
+pm: 
+	mov HEX1, #00001100B
+	ljmp do_nothing
+am:
+	mov HEX1, #00001000B
+	
+do_nothing:
+	pop dph
+	pop dpl
+	pop acc
+	pop psw
+	
+	reti
+
+
+
+ISR_timer0:
+	cpl P0.0
+    mov TH0, #high(TIMER0_RELOAD)
+    mov TL0, #low(TIMER0_RELOAD)
+	reti
+	
+
+
+
+
+
+
+;code that fires when the for adjusting the alarm time
+showalarmtime:
+
+	mov dptr, #myLUT
+	mov a, alarmseconds
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX2, a
+;seconds digit two
+	mov a, alarmseconds
+	swap a
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX3, a
+
+;minutes- digit 1
+	mov a, alarmminutes
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX4, a
+	
+; minutes digit 2
+	mov a, alarmminutes
+	swap a
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX5, a
+
+;hours digit 1
+	mov a, alarmhours
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX6, a
+
+;hours digit 2
+	mov a, alarmhours
+	swap a
+	anl a, #00001111B
+	movc a, @a+dptr
+	mov HEX7, a
+ret
+	
+setthealarm:
+
+jnb SWA.1, earlyreturn
+
+lcall showalarmtime
+
+;using the buttons to set the time of the alarm
+
+sw1check: 
+
+jb KEY.1, sw2check
+jnb KEY.1, $	;Wait for key to be released
+
+mov a, alarmseconds	;Increment seconds, and display
+add a, #1
+da a
+mov alarmseconds, a
+cjne A, #60H, showalarmtime
+mov alarmseconds, #0
+lcall showalarmtime
+
+sw2check:
+jb KEY.2, sw3check
+jnb KEY.2, $
+mov a, alarmminutes	;Increment seconds, and display
+add a, #1
+da a
+mov alarmminutes, a
+cjne A, #60H, showalarmtime
+mov alarmminutes, #0
+lcall showalarmtime
+
+sw3check:
+jb KEY.3, setalarmampm
+jnb KEY.3, $
+mov a, alarmhours	;Increment seconds, and display
+add a, #1
+da a
+mov alarmhours, a
+cjne A, #13H, showalarmtime
+mov alarmhours, #01H
+lcall showalarmtime
+
+setalarmampm:
+jb swa.3,alarmam
+jnb swa.3,alarmpm
+
+
+alarmpm: 
+	mov HEX1, #00001100B
+	setb alarmAMPM
+	sjmp earlyreturn
+alarmam:
+	mov HEX1, #00001000B
+	mov alarmAMPM, #0
+jb SWA.1, setthealarm ;don't remove- we need it
+
+earlyreturn:
+ret
+
+
+
+
+setthetime:
+
+jnb SWA.0, searlyreturn
+
+jb KEY.1, swi2check
+jnb KEY.1, $	;Wait for key to be released
+
+mov a, seconds	;Increment seconds, and display
+add a, #1
+da a
+mov seconds, a
+cjne A, #60H, swi2check
+mov seconds, #0
+
+
+swi2check:
+jb KEY.2, swi3check
+jnb KEY.2, $
+mov a, minutes	;Increment seconds, and display
+add a, #1
+da a
+mov minutes, a
+cjne A, #60H, swi3check
+mov minutes, #0
+
+
+swi3check:
+jb KEY.3, setclockmampm
+jnb KEY.3, $
+mov a, hours	;Increment seconds, and display
+add a, #1
+da a
+mov hours, a
+cjne A, #13H, setclockmampm
+mov hours, #01H
+
+
+setclockmampm:
+jb swa.3, timeam
+jnb swa.3, timepm
+
+timeam:
+setb AMPM
+sjmp done
+
+timepm:
+clr AMPM
+
+done:
+jb SWA.0, setthetime ;don't remove- we need it
+
+
+
+searlyreturn:
+ret
+
+
+
+
+;For a 33.33MHz clock, one cycle takes 30ns	
+myprogram:
+	mov SP, #7FH
+	mov LEDRA,#0
+	mov LEDRB,#0
+	mov LEDRC,#0
+	mov LEDG,#0
+	mov P0MOD, #00000011B ; P0.0, P0.1 are outputs.  P0.1 is used for testing Timer 2!
+	setb P0.0
+
+    mov TMOD,  #00000001B ; GATE=0, C/T*=0, M1=0, M0=1: 16-bit timer
+	clr TR0 ; Disable timer 0
+	; timer 0 is for alarm
+	clr TF0
+    mov TH0, #high(TIMER0_RELOAD)
+    mov TL0, #low(TIMER0_RELOAD)
+    setb TR0 ; Enable timer 0
+    clr ET0 ; Enable timer 0 interrupt
+    
+     
+    mov T2CON, #00H ; Autoreload is enabled, work as a timer
+    clr TR2
+    clr TF2
+    ; Set up timer 2 to interrupt every 10ms-clock
+    mov RCAP2H,#high(TIMER2_RELOAD)
+    mov RCAP2L,#low(TIMER2_RELOAD)
+    setb TR2
+    setb ET2
+    
+    
+    mov Cnt_10ms, #0
+    mov seconds, #55H
+	mov minutes, #59H
+	mov hours, #12H
+	mov alarmseconds, #0H
+	mov alarmminutes, #0H
+	mov alarmhours, #12H
+	setb ampm
+	 
+    setb EA  ; Enable all interrupts
+
+
+forever:
+lcall setthealarm
+lcall setthetime
+
+sjmp forever
+
+END
